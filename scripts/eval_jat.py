@@ -178,10 +178,11 @@ def main():
             warnings.warn(f"Task {task} is not supported.")
 
     # Extract mean and std, and save scores dict
-    eval_path = f"{model_args.model_name_or_path}/evaluations.json"
+    output_dir = f"runs/{model_args.model_name_or_path}"
+    eval_path = f"{output_dir}/evaluations.json"
 
-    if not os.path.exists(f"{model_args.model_name_or_path}"):
-        os.makedirs(f"{model_args.model_name_or_path}")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     if evaluations:
         with open(eval_path, "w") as file:
@@ -189,7 +190,7 @@ def main():
 
     # Save the video
     if eval_args.save_video:
-        replay_path = f"{model_args.model_name_or_path}/replay.mp4"
+        replay_path = f"{output_dir}/replay.mp4"
         save_video_grid(video_list, input_fps, replay_path, output_fps=30, max_length_seconds=180)
     else:
         replay_path = None
