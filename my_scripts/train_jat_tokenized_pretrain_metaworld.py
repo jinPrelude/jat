@@ -116,6 +116,14 @@ def main():
             tasks.remove(domain)
             tasks.extend([env_id for env_id in TASK_NAME_TO_ENV_ID.keys() if env_id.startswith(domain)])
 
+            tasks = [task for task in tasks if task not in [
+                "metaworld-bin-picking",
+                "metaworld-box-close",
+                "metaworld-door-lock",
+                "metaworld-door-unlock",
+                "metaworld-hand-insert"
+            ]] # exclude test-task
+
     # Load the datasets
     if HF_DATASETS_OFFLINE:
         for task in tasks:
