@@ -58,52 +58,53 @@ def main(args):
     scores_dict = load_scores_dict(args.scores)
     model_norm_scores = {}
 
-    # Process jat evaluations
-    env_avg = load_evaluations(args.jat_scores)
-    train_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env not in args.test_tasks)
-    test_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env in args.test_tasks)
-    if train_score is not None or test_score is not None:
-        model_norm_scores['jat'] = (train_score, test_score)
-    else:
-        print(f"Warning: No matching environments found for model jat in {args.jat_scores}")
-
-    # Process additional evaluation files
+    # Process additional evaluation files (compute only test tasks)
     for eval_path in args.evals:
         model_name = extract_model_name(eval_path)
         env_avg = load_evaluations(eval_path)
-        train_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env not in args.test_tasks)
         test_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env in args.test_tasks)
-        if train_score is not None or test_score is not None:
-            model_norm_scores[model_name] = (train_score, test_score)
+        if test_score is not None:
+            model_norm_scores[model_name] = test_score
         else:
             print(f"Warning: No matching environments for model {model_name} in {eval_path}")
 
     sorted_model_names = sort_model_names(model_norm_scores.keys())
 
     # Prepare labels/values with placeholders for random (0) and expert (1)
-    train_labels = ['random agent']
-    train_values = [0.0]
     test_labels = ['random agent']
     test_values = [0.0]
 
     for model_name in sorted_model_names:
-        train_labels.append(model_name)
         test_labels.append(model_name)
-        train_values.append(model_norm_scores[model_name][0] if model_norm_scores[model_name][0] is not None else 0.0)
-        test_values.append(model_norm_scores[model_name][1] if model_norm_scores[model_name][1] is not None else 0.0)
+        test_values.append(model_norm_scores[model_name] if model_norm_scores[model_name] is not None else 0.0)
 
-    train_labels.append('expert agent')
-    train_values.append(1.0)
+    # Process jat evaluations (compute only test tasks)
+    env_avg = load_evaluations(args.jat_scores)
+    jat_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env in args.test_tasks)
+    if jat_score is not None:
+        test_labels.append('jat')
+        test_values.append(jat_score)
+    else:
+        print(f"Warning: No matching environments found for model jat in {args.jat_scores}")
+
+
     test_labels.append('expert agent')
     test_values.append(1.0)
 
-    fig, (ax_train, ax_test) = plt.subplots(1, 2, figsize=(16, 6))
-    plot_bar(ax_train, train_labels, train_values, 'Train Tasks Performance', 'skyblue')
-    plot_bar(ax_test, test_labels, test_values, 'Test Tasks Performance', 'salmon')
+    # Build colors list: 'random agent' and 'expert agent' -> gray, 'jat' -> salmon, others (evals) -> skyblue.
+    colors = []
+    for label in test_labels:
+        if label in ['random agent', 'expert agent', 'jat']:
+            colors.append("salmon")
+        else:
+            colors.append("skyblue")
+
+    fig, ax_test = plt.subplots(figsize=(8, 6))
+    plot_bar(ax_test, test_labels, test_values, 'Test Tasks Performance', colors)
 
     plt.tight_layout()
     plt.savefig(args.output)
-    print(f'Bar plots saved to {args.output}')
+    print(f'Bar plot saved to {args.output}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compute normalized performance and generate bar plots.')
@@ -113,10 +114,10 @@ if __name__ == '__main__':
                         help='Path to jat evaluations.json file')
     parser.add_argument('--evals', type=str, nargs='+',
                         default=[
-                          'runs/checkpoints/jat/pre-trained/checkpoint-5000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-10000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-15000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-20000/evaluations.json'
+                            'runs/checkpoints/jat/fine-tuned/pretrained-checkpoint-20000/checkpoint-100/evaluations.json',
+                            'runs/checkpoints/jat/fine-tuned/pretrained-checkpoint-20000/checkpoint-300/evaluations.json',
+                            'runs/checkpoints/jat/fine-tuned/pretrained-checkpoint-20000/checkpoint-500/evaluations.json',
+                            'runs/trainer_output/trainer-checkpoint-500/evaluations.json',
                         ],
                         help='Paths to evaluations_{model_name}.json files')
     parser.add_argument('--test-tasks', type=str, nargs='+',
@@ -128,7 +129,7 @@ if __name__ == '__main__':
                           "metaworld-hand-insert"
                         ],
                         help='List of environment names to treat as test tasks; others are train tasks')
-    parser.add_argument('--output', type=str, default='normalized_performance.png',
-                        help='Output PNG file name for the bar plots')
+    parser.add_argument('--output', type=str, default='normalized_performance_finetuned.png',
+                        help='Output PNG file name for the bar plot')
     args = parser.parse_args()
     main(args)
