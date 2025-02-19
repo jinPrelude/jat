@@ -18,5 +18,5 @@ conda activate jat
 python scripts/eval_jat.py \
 --model_name_or_path "$MODEL_NAME" \
 --trust_remote_code \
---num_episodes 20 \
+--num_episodes 50 \
 --tasks metaworld-bin-picking metaworld-box-close metaworld-door-lock metaworld-door-unlock metaworld-hand-insert

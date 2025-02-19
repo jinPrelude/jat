@@ -12,10 +12,10 @@ conda activate jat
 
 EXP_NAME="jat_pretrain"
 
+export WANDB_PROJECT=jat_pretraining
+
 accelerate launch my_scripts/train_jat_tokenized_pretrain_metaworld.py \
 --output_dir checkpoints/pre_trained/${EXP_NAME} \
---wandb_project jat_pretraining \
---wandb_watch all \
 --run_name ${EXP_NAME} \
 --model_name_or_path jat-project/jat \
 --tasks metaworld \

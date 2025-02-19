@@ -12,10 +12,10 @@ conda activate jat
 
 EXP_NAME="jat_wo_obs_pred_pretrained_20000_finetune"
 
+export WANDB_PROJECT=jat_pretraining
+
 accelerate launch my_scripts/train_jat_tokenized_finetune_metaworld.py \
 --output_dir checkpoints/fine_tuned \
---wandb_project jat_finetuning \
---wandb_watch all \
 --run_name ${EXP_NAME} \
 --model_name_or_path checkpoints/pre_trained/jat_wo_obs_pred/checkpoint-20000 \
 --output_dir checkpoints/fine_tuned/${EXP_NAME} \
