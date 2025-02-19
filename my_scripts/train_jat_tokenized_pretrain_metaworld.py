@@ -75,7 +75,6 @@ SAMPLE_WEIGHTS = {
     "wikipedia": 10.0,
 }
 
-os.environ["WANDB_PROJECT"] = "jat"
 
 
 class MyTrainer(Trainer):
