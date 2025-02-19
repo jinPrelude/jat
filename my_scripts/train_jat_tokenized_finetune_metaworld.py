@@ -10,6 +10,8 @@ from typing import List, Optional
 os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/'  # huggingface cache 경로 변경
 os.environ['HF_DATASETS_OFFLINE'] = '1'
 
+import numpy as np
+from tqdm import tqdm
 import datasets.config
 from datasets import load_dataset, load_from_disk
 from datasets.config import HF_DATASETS_CACHE, HF_DATASETS_OFFLINE
@@ -43,7 +45,7 @@ class ModelArguments:
 @dataclass
 class DataTrainingArguments:
     tasks: List[str] = field(default_factory=list, metadata={"help": "Tasks to train on."})
-    top_n_demos: Optional[int] = field(default=None, metadata={"help": "Select top n demos with highest reward."})
+    top_k_demos: Optional[int] = field(default=None, metadata={"help": "Select top n demos with highest reward."})
 
 SAMPLE_WEIGHTS = {
     "conceptual-captions": 10.0,
@@ -77,6 +79,7 @@ def load_config_and_model(model_args):
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
+    logging.info(f'trust_remote_code: {model_args.trust_remote_code}')
     model = JatModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
@@ -94,7 +97,7 @@ def load_train_dataset(data_args, training_args):
     # Pick a single task.
     if not data_args.tasks:
         raise ValueError("Please specify at least one task.")
-    tasks = [data_args.tasks[0]]
+    tasks = data_args.tasks
 
     # Load dataset according to offline flag.
     if HF_DATASETS_OFFLINE:
@@ -117,12 +120,18 @@ dataset.save_to_disk('{dataset_path}')
     else:
         train_dataset = {task: load_dataset("jat-project/jat-dataset-tokenized", task, split="train") for task in tasks}
 
-    # Optionally filter demos based on reward.
-    if data_args.top_n_demos is not None:
-        for task in train_dataset:
-            ds = train_dataset[task]
-            ds = ds.sort("reward", reverse=True)
-            train_dataset[task] = ds.select(range(data_args.top_n_demos))
+    if data_args.top_k_demos is not None:
+        for task in tqdm(train_dataset):
+            dataset = train_dataset[task]
+            # Compute cumulative rewards vectorized over the dataset.
+            rewards = dataset["rewards"]  # List of lists.
+            # Convert rewards to a NumPy array of cumulative rewards.
+            cum_rewards = np.array([np.sum(r) for r in rewards])
+            # Get indices of top k demos.
+            indices = np.argsort(cum_rewards)[-data_args.top_k_demos:][::-1].tolist()
+            # Select the top k examples.
+            dataset = dataset.select(indices)
+            train_dataset[task] = dataset
 
     # Calculate sampling probabilities.
     weights = [SAMPLE_WEIGHTS.get(t, 1.0) for t in train_dataset.keys()]
