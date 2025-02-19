@@ -55,6 +55,9 @@ class ModelArguments:
             )
         },
     )
+    observation_loss_coef: float = field(
+        default=0.0005,
+    )
 
 
 @dataclass
@@ -102,6 +105,8 @@ def main():
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
+    if model_args.observation_loss_coef is not None:
+        config.observation_loss_coef = model_args.observation_loss_coef
     model = JatModel(config)
     processor = AutoProcessor.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
