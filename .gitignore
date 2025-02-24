@@ -143,3 +143,7 @@ runs/
 logs/
 
 train_dir/
+
+*.png
+
+converted_data/

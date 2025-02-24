@@ -11,7 +11,7 @@ os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/' # huggingface c
 os.environ['HF_DATASETS_OFFLINE'] = '1'
 
 import datasets.config
-from datasets import load_dataset, load_from_disk
+from datasets import load_from_disk
 from datasets.config import HF_DATASETS_CACHE, HF_DATASETS_OFFLINE
 from tqdm import tqdm
 from transformers import AutoConfig, AutoProcessor, HfArgumentParser, Trainer, TrainingArguments
@@ -55,6 +55,9 @@ class ModelArguments:
             )
         },
     )
+    observation_loss_coef: float = field(
+        default=0.0005,
+    )
 
 
 @dataclass
@@ -72,7 +75,6 @@ SAMPLE_WEIGHTS = {
     "wikipedia": 10.0,
 }
 
-os.environ["WANDB_PROJECT"] = "jat"
 
 
 class MyTrainer(Trainer):
@@ -102,6 +104,8 @@ def main():
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
+    if model_args.observation_loss_coef is not None:
+        config.observation_loss_coef = model_args.observation_loss_coef
     model = JatModel(config)
     processor = AutoProcessor.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
@@ -116,27 +120,22 @@ def main():
             tasks.remove(domain)
             tasks.extend([env_id for env_id in TASK_NAME_TO_ENV_ID.keys() if env_id.startswith(domain)])
 
+            tasks = [task for task in tasks if task not in [
+                "metaworld-bin-picking",
+                "metaworld-box-close",
+                "metaworld-door-lock",
+                "metaworld-door-unlock",
+                "metaworld-hand-insert"
+            ]] # exclude test-task
+
     # Load the datasets
     if HF_DATASETS_OFFLINE:
-        for task in tasks:
-            if not os.path.exists(f"{HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/{task}"):
-                raise ValueError(
-                    f"""Dataset {task} not found in {HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/
-Make sure to download and save it first with
-```
-from datasets import load_dataset
-dataset = load_dataset('jat-project/jat-dataset-tokenized', '{task}')
-dataset.save_to_disk('{HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/{task}')
-```"""
-                )
         train_dataset = {}
-        for task in tqdm(tasks, desc="Loading datasets"):
-            d = load_from_disk(f"{HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/{task}")
-            train_dataset[task] = d["train"]
-    else:
-        train_dataset = {
-            task: load_dataset("jat-project/jat-dataset-tokenized", task, split="train") for task in tasks
-        }
+        for task in tqdm(tasks[1:], desc="Loading datasets"):
+            if not os.path.exists(f"converted_data/metaworld_2_tokenized/{TASK_NAME_TO_ENV_ID[task]}"):
+                continue
+            d = load_from_disk(f"converted_data/metaworld_2_tokenized/{TASK_NAME_TO_ENV_ID[task]}")
+            train_dataset[task] = d
 
     weights = [SAMPLE_WEIGHTS.get(t, 1.0) for t in train_dataset.keys()]
 

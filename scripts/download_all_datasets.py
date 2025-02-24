@@ -4,6 +4,9 @@
 import argparse
 import os
 
+os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/' # huggingface cache 를 /scratch/euijinrnd로 바꿔주기
+# export HF_HOME=/scratch/euijinrnd/.cache/huggingface/ && watch -n 10 huggingface-cli scan-cache
+
 from datasets import get_dataset_config_names, load_dataset
 from datasets.config import HF_DATASETS_CACHE
 

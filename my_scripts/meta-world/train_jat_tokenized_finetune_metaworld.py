@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Train a JAT model on the JAT dataset"""
 
-
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from typing import List, Optional
-os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/' # huggingface cache 를 /scratch/euijinrnd로 바꿔주기
+os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/'  # huggingface cache 경로 변경
 os.environ['HF_DATASETS_OFFLINE'] = '1'
 
+import numpy as np
+from tqdm import tqdm
 import datasets.config
 from datasets import load_dataset, load_from_disk
 from datasets.config import HF_DATASETS_CACHE, HF_DATASETS_OFFLINE
@@ -64,6 +65,7 @@ class DataTrainingArguments:
     """
 
     tasks: List[str] = field(default_factory=list, metadata={"help": "Tasks to train on."})
+    top_k_demos: Optional[int] = field(default=None, metadata={"help": "Select top n demos with highest reward."})
 
 
 SAMPLE_WEIGHTS = {
@@ -72,7 +74,6 @@ SAMPLE_WEIGHTS = {
     "wikipedia": 10.0,
 }
 
-os.environ["WANDB_PROJECT"] = "jat"
 
 
 class MyTrainer(Trainer):
@@ -102,21 +103,23 @@ def main():
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
-    model = JatModel(config)
+    model = JatModel.from_pretrained(
+        model_args.model_name_or_path,
+        config=config,
+        cache_dir=model_args.cache_dir,
+        trust_remote_code=model_args.trust_remote_code,
+    )
     processor = AutoProcessor.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
 
-    # Set the tasks
+    if not data_args.tasks:
+        raise ValueError("Please specify at least one task.")
     tasks = data_args.tasks
-    for domain in ["atari", "babyai", "metaworld", "mujoco"]:
-        if domain in tasks:
-            tasks.remove(domain)
-            tasks.extend([env_id for env_id in TASK_NAME_TO_ENV_ID.keys() if env_id.startswith(domain)])
 
-    # Load the datasets
+    # Load dataset according to offline flag.
     if HF_DATASETS_OFFLINE:
         for task in tasks:
             if not os.path.exists(f"{HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/{task}"):
@@ -138,8 +141,20 @@ dataset.save_to_disk('{HF_DATASETS_CACHE}/jat-project/jat-dataset-tokenized/{tas
             task: load_dataset("jat-project/jat-dataset-tokenized", task, split="train") for task in tasks
         }
 
-    weights = [SAMPLE_WEIGHTS.get(t, 1.0) for t in train_dataset.keys()]
+    if data_args.top_k_demos is not None:
+        for task in tqdm(train_dataset):
+            dataset = train_dataset[task]
+            # Compute cumulative rewards vectorized over the dataset.
+            rewards = dataset["rewards"]  # List of lists.
+            # Convert rewards to a NumPy array of cumulative rewards.
+            cum_rewards = np.array([np.sum(r) for r in rewards])
+            # Get indices of top k demos.
+            indices = np.argsort(cum_rewards)[-data_args.top_k_demos:][::-1].tolist()
+            # Select the top k examples.
+            dataset = dataset.select(indices)
+            train_dataset[task] = dataset
 
+    weights = [SAMPLE_WEIGHTS.get(t, 1.0) for t in train_dataset.keys()]
     train_dataset = interleave_datasets(
         list(train_dataset.values()),
         probabilities=[w / sum(weights) for w in weights],

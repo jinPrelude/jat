@@ -128,6 +128,9 @@ setup(
     keywords="simulation environments machine learning reinforcement learning deep learning",
     zip_safe=False,  # Required for mypy to find the py.typed file
     python_requires=">=3.8",
+    package_data={
+        "jat": ["eval/rl/scores_dict.json"],
+    },
 )
 
 # When building extension modules `cmake_install_dir` should always be set to the

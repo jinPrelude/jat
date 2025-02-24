@@ -7,6 +7,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import List, Optional
+os.environ['HF_HOME'] = '/scratch/euijinrnd/.cache/huggingface/' # huggingface cache 를 /scratch/euijinrnd로 바꿔주기
+os.environ['HF_DATASETS_OFFLINE'] = '1'
 
 import datasets.config
 from datasets import load_dataset, load_from_disk
@@ -79,7 +81,6 @@ SAMPLE_WEIGHTS = {
     "wikipedia": 10.0,
 }
 
-os.environ["WANDB_ENTITY"] = "jat-project"
 os.environ["WANDB_PROJECT"] = "jat"
 
 
