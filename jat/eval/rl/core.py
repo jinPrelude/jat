@@ -334,7 +334,7 @@ class MetaWorldWrapper(gym.Wrapper):
         obs_space_dict['obs_gt'] = env.observation_space
         self.observation_space = gym.spaces.Dict(obs_space_dict)
 
-    def resize_image(image: np.ndarray, size: Tuple[int, int] = (84, 84)) -> np.ndarray:
+    def resize_image(self, image: np.ndarray, size: Tuple[int, int] = (84, 84)) -> np.ndarray:
         # Convert numpy array to PIL Image, resize, and convert back
         pil_img = Image.fromarray(image)
         resized = np.array(pil_img.resize(size, Image.Resampling.BICUBIC))
