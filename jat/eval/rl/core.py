@@ -1,8 +1,13 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import Env, ObservationWrapper, RewardWrapper, spaces
+from gymnasium.envs.mujoco.mujoco_rendering import OffScreenViewer
+
+import mujoco
+from PIL import Image
+from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE  # noqa
 
 from .wrappers import (
     ClipRewardEnv,
@@ -268,13 +273,137 @@ class ContinuousObservationDictWrapper(ObservationWrapper):
     def observation(self, observation):
         return {"continuous_observation": observation}
 
+class MetaWorldWrapper(gym.Wrapper):
+    def __init__(self, 
+                 env_name: str,
+                 img_height: int = 128,
+                 img_width: int = 128,
+                 cameras=('corner2',),
+                 env_kwargs=None,):
+        if env_kwargs is None:
+            env_kwargs = {}
+        env = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[f'{env_name}-goal-observable'](**env_kwargs)
+        env._freeze_rand_vec = False
+        super().__init__(env)
+        # # I don't know why
+        self.env.model.cam_pos[2] = [0.75, 0.075, 0.7]
+
+        shape_meta = {
+            'action_dim': 4,
+            'observation': {
+                'rgb': {'corner_rgb': (3, 128, 128)},
+                'lowdim': {'robo_states': 8},
+            },
+            'task': {
+                'type': 'onehot',
+                'n_tasks': 45
+            }
+        }
+
+        self.img_width = img_width
+        self.img_height = img_height
+        obs_meta = shape_meta['observation']
+        self.rgb_outputs = list(obs_meta['rgb'])
+        self.lowdim_outputs = list(obs_meta['lowdim'])
+
+        self.cameras = cameras
+        self.viewer = OffScreenViewer(
+            env.model,
+            env.data,
+            img_width,
+            img_height,
+            env.mujoco_renderer.max_geom,
+            env.mujoco_renderer._vopt,
+        )
+
+        obs_space_dict = {}
+        for key in self.rgb_outputs:
+            obs_space_dict[key] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(img_height, img_width, 3),
+                dtype=np.uint8
+            )
+        for key in self.lowdim_outputs:
+            obs_space_dict[key] = gym.spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(obs_meta['lowdim'][key],),
+                dtype=np.float32
+            )
+        obs_space_dict['obs_gt'] = env.observation_space
+        self.observation_space = gym.spaces.Dict(obs_space_dict)
+
+    def resize_image(image: np.ndarray, size: Tuple[int, int] = (84, 84)) -> np.ndarray:
+        # Convert numpy array to PIL Image, resize, and convert back
+        pil_img = Image.fromarray(image)
+        resized = np.array(pil_img.resize(size, Image.Resampling.BICUBIC))
+        return resized
+
+    def step(self, action):
+        obs_gt, reward, terminated, truncated, info = super().step(action)
+        obs_gt = obs_gt.astype(np.float32)
+        info['obs_gt'] = obs_gt
+
+        next_obs = self.make_obs(obs_gt)
+
+        terminated = info['success'] == 1
+        return next_obs, reward, terminated, truncated, info
+    
+    def reset(self, seed=None, options=None):
+        obs_gt, info = super().reset()
+        obs_gt = obs_gt.astype(np.float32)
+        info['obs_gt'] = obs_gt
+
+        obs = self.make_obs(obs_gt)
+
+        return obs, info
+
+    def make_obs(self, obs_gt):
+        obs = {}
+        # obs['robot_states'] = np.concatenate((obs_gt[:4],obs_gt[18:22]))
+        # obs['obs_gt'] = obs_gt
+
+        # image_dict = {}
+        # for camera_name in self.cameras:
+        #     image_obs = self.render(camera_name=camera_name, mode='all')
+        #     image_dict[camera_name] = image_obs
+        # for key in self.rgb_outputs:
+        #     obs[key] = image_dict[f'{key[:-4]}2'][::-1] # since generated dataset at the time had corner key instead of corner2
+        obs['image_observation'] = self.resize_image(self.render(camera_name=self.cameras[0], mode='all').copy()[::-1])
+
+        return obs
+
+    def render(self, camera_name=None, mode='rgb_array'):
+        if camera_name is None:
+            camera_name = self.cameras[0]
+        cam_id = mujoco.mj_name2id(self.env.model, 
+                                mujoco.mjtObj.mjOBJ_CAMERA, 
+                                camera_name)
+        
+        return self.viewer.render(
+            render_mode=mode,
+            camera_id=cam_id
+        )
+    
+    def set_task(self, task):
+        self.env.set_task(task)
+        self.env._partially_observable = False
+
+    def seed(self, seed):
+        self.env.seed(seed)
+
+    def close(self):
+        self.viewer.close()
+
 
 def make_metaworld(task_name: str, **kwargs) -> Env:
-    from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE  # noqa
-
     env_cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[f"{TASK_NAME_TO_ENV_ID[task_name]}-goal-observable"]
     env = ContinuousObservationDictWrapper(env_cls(**kwargs))
     return env
+
+def make_pixel_metaworld(task_name: str, **kwargs) -> Env:
+    return MetaWorldWrapper(env_name=TASK_NAME_TO_ENV_ID[task_name])
 
 
 def make_mujoco(task_name: str, **kwargs) -> Env:
