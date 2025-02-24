@@ -7,8 +7,45 @@ import os
 from multiprocessing import Pool
 
 import gymnasium as gym
-from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE  # noqa: F401
+from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE
 import numpy as np
+
+
+def convert_to_policy_name(task):
+    """
+    Convert task name to directory and policy names.
+
+    dir_name:
+    1. Remove 'metaworld-' prefix.
+    2. Split by '-'.
+    3. Join with '_'.
+    4. Prefix with 'sawyer_' and suffix with '_v2_policy'.
+    eg. "metaworld-plate-slide-back" -> "sawyer_plate_slide_back_v2_policy"
+
+    policy_name:
+    1. Remove 'metaworld-' prefix.
+    2. Split by '-'.
+    3. Capitalize the first letter of each word.
+    4. Join words.
+    5. Prefix with 'Sawyer' and suffix with 'V2Policy'.
+    eg. "metaworld-plate-slide-back" -> "SawyerPlateSlideBackV2Policy"
+    """
+    # Remove 'metaworld-' prefix
+    task_name = task.replace('metaworld-', '')
+    
+    # Split by '-'
+    words_list = task_name.split('-')
+    
+    # Construct the directory name
+    dir_name = "sawyer_" + "_".join(words_list) + "_v2_policy"
+    
+    # Capitalize first letter of each word
+    words_list = [word.capitalize() for word in words_list]
+    
+    # Construct the policy name
+    policy_name = "Sawyer" + "".join(words_list) + "V2Policy"
+    
+    return dir_name, policy_name
 
 
 FILENAME = "jat/eval/rl/scores_dict.json"
@@ -67,33 +104,32 @@ TASK_NAME_TO_ENV_NAME = {
 }
 
 
-TOT_NUM_TIMESTEPS = 1_000_000
+NUM_EPISODES = 100
 
 
-def generate_random_score(task_name):
-    env_seed = 0
+def generate_expert_score(task_name):
+    print(f"Starting task: {task_name}")
 
     # Make the environment
     env_cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[f"{TASK_NAME_TO_ENV_NAME[task_name]}-goal-observable"]
-    env = env_cls(seed=env_seed)
-    env.reset()
+
+    dir_name, policy_name = convert_to_policy_name(task_name)
+    policy_module = __import__(f"metaworld.policies.{dir_name}", fromlist=[policy_name])
+    model = getattr(policy_module, policy_name)()
 
     # Initialize the variables
     all_episode_rewards = []
-    tot_episode_rewards = 0  # for one episode
-    num_timesteps = 0
-    terminated = truncated = False
-    while num_timesteps < TOT_NUM_TIMESTEPS or not (terminated or truncated):
-        action = env.action_space.sample()
-        observation, reward, terminated, truncated, info = env.step(action)
-        tot_episode_rewards += reward
-        num_timesteps += 1
-        if terminated or truncated:
-            env_seed += 1
-            env = env_cls(seed=env_seed)
-            env.reset()
-            all_episode_rewards.append(tot_episode_rewards)
-            tot_episode_rewards = 0
+    for i in range(NUM_EPISODES):
+        env = env_cls(seed=i)
+        observation, _ = env.reset()
+
+        tot_episode_rewards = 0  # for one episode
+        terminated = truncated = False
+        while not (terminated or truncated):
+            action = model.get_action(observation)
+            observation, reward, terminated, truncated, info = env.step(action)
+            tot_episode_rewards += reward
+        all_episode_rewards.append(tot_episode_rewards)
 
     # Load the scores dictionary
     if not os.path.exists(FILENAME):
@@ -105,7 +141,7 @@ def generate_random_score(task_name):
     # Add the random scores to the dictionary
     if task_name not in scores_dict:
         scores_dict[task_name] = {}
-    scores_dict[task_name]["random"] = {"mean": np.mean(all_episode_rewards), "std": np.std(all_episode_rewards)}
+    scores_dict[task_name]["expert"] = {"mean": np.mean(all_episode_rewards), "std": np.std(all_episode_rewards)}
 
     # Save the dictionary to a file
     with open(FILENAME, "w") as file:
@@ -114,8 +150,9 @@ def generate_random_score(task_name):
             for task in sorted(scores_dict)
         }
         json.dump(scores_dict, file, indent=4)
-
+    print(f"Completed task: {task_name}")
 
 if __name__ == "__main__":
     with Pool(16) as p:
-        p.map(generate_random_score, TASK_NAME_TO_ENV_NAME.keys())
+        p.map(generate_expert_score, TASK_NAME_TO_ENV_NAME.keys())
+    print("All tasks completed.")

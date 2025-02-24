@@ -270,10 +270,10 @@ class ContinuousObservationDictWrapper(ObservationWrapper):
 
 
 def make_metaworld(task_name: str, **kwargs) -> Env:
-    import metaworld  # noqa
+    from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE  # noqa
 
-    env = gym.make(TASK_NAME_TO_ENV_ID[task_name], **kwargs)
-    env = ContinuousObservationDictWrapper(env)
+    env_cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[f"{TASK_NAME_TO_ENV_ID[task_name]}-goal-observable"]
+    env = ContinuousObservationDictWrapper(env_cls(**kwargs))
     return env
 
 
