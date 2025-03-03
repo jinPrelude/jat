@@ -210,7 +210,7 @@ class ImageEncoder(nn.Module):
 
     def __init__(self, hidden_size: int) -> None:
         super().__init__()
-        self.conv1 = nn.Conv2d(4, 32, kernel_size=3, stride=2, padding=1)  # 42x42
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1)  # 42x42
         self.norm1 = nn.InstanceNorm2d(32)
         self.att1 = AttentionLayer(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)  # 21x21
@@ -242,7 +242,7 @@ class ImageDecoder(nn.Module):
             Size of the input hidden state.
 
     Returns:
-        `torch.Tensor` of shape `(batch_size, 4, 84, 84)`:
+        `torch.Tensor` of shape `(batch_size, 3, 84, 84)`:
             Output tensor representing the reconstructed images.
     """
 
@@ -255,7 +255,7 @@ class ImageDecoder(nn.Module):
         self.deconv2 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)  # 42x42
         self.norm2 = nn.InstanceNorm2d(32)
         self.att2 = AttentionLayer(32)
-        self.deconv3 = nn.ConvTranspose2d(32, 4, kernel_size=3, stride=2, padding=1, output_padding=1)  # 84x84
+        self.deconv3 = nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1)  # 84x84
 
     def forward(self, x: FloatTensor) -> FloatTensor:
         x = self.fc(x)
