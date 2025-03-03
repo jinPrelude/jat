@@ -147,3 +147,5 @@ train_dir/
 *.png
 
 converted_data/
+*.out
+local/
