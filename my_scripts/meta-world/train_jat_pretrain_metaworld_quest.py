@@ -1,3 +1,4 @@
+# train_jat_tokenized_pretrain_metaworld_quest.py
 #!/usr/bin/env python3
 """Train a JAT model on the JAT dataset"""
 
@@ -67,7 +68,18 @@ class DataTrainingArguments:
     """
 
     tasks: List[str] = field(default_factory=list, metadata={"help": "Tasks to train on."})
+    preprocess_num_proc: int = field(
+        default=1, metadata={"help": "Number of processes to use for preprocessing the data."}
+    )
+    eval_num_samples: int = field(default=1000, metadata={"help": "Number of samples to use for evaluation."})
 
+
+LOSS_WEIGHTS = {
+    **{task: 10.0 for task in TASK_NAME_TO_ENV_ID.keys() if task.startswith("mujoco")},
+    **{task: 50.0 for task in TASK_NAME_TO_ENV_ID.keys() if task.startswith("metaworld")},
+    "mujoco-pendulum": 50.0,
+    "mujoco-doublependulum": 20.0,
+}
 
 SAMPLE_WEIGHTS = {
     "conceptual-captions": 10.0,
@@ -132,10 +144,47 @@ def main():
     if HF_DATASETS_OFFLINE:
         train_dataset = {}
         for task in tqdm(tasks[1:], desc="Loading datasets"):
-            if not os.path.exists(f"converted_data/metaworld_2_tokenized/{TASK_NAME_TO_ENV_ID[task]}"):
+            if not os.path.exists(f"converted_data/metaworld_array/{TASK_NAME_TO_ENV_ID[task]}"):
                 continue
-            d = load_from_disk(f"converted_data/metaworld_2_tokenized/{TASK_NAME_TO_ENV_ID[task]}")
-            train_dataset[task] = d
+            dataset = load_from_disk(f"converted_data/metaworld_array/{TASK_NAME_TO_ENV_ID[task]}")
+            train_dataset[task] = dataset
+
+    # Preprocess the dataset
+    for task in train_dataset.keys():
+        dataset = train_dataset[task]
+        column_names = set(dataset.column_names)  # need to be done here because this info is lost after the map
+        dataset = dataset.filter(lambda example: example.get("rewards") != [])
+
+        # Add an initial 0 reward and remove the last reward
+        def add_initial_reward(example):
+            if "rewards" in example:
+                example["rewards"] = [0.0] + example["rewards"][:-1]
+            return example
+
+        dataset = dataset.map(add_initial_reward)
+
+        # We've shown that reducing the sequence length for atari doesn't impact performance but allows for a
+        # larger global batch size
+        max_length = 64 if task.startswith("atari") else None
+
+        def preprocess(example_batch, max_length):
+            return processor(**example_batch, padding="max_length", truncation="preserve", max_length=max_length)
+
+        dataset = dataset.map(
+            preprocess,
+            batched=True,
+            batch_size=1,  # small to avoid OOM
+            remove_columns={"text", "images", "text_observations"}.intersection(column_names),
+            fn_kwargs={"max_length": max_length},
+        )
+
+        def add_loss_weight(example, loss_weight):
+            example["loss_weight"] = [loss_weight] * len(next(iter(example.values())))
+            return example
+
+        dataset = dataset.map(add_loss_weight, fn_kwargs={"loss_weight": LOSS_WEIGHTS.get(task, 1.0)})
+        train_dataset[task] = dataset
+
 
     weights = [SAMPLE_WEIGHTS.get(t, 1.0) for t in train_dataset.keys()]
 
