@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import json
 import os
@@ -6,118 +5,93 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 
-def load_scores_dict(path):
-    with open(path, 'r') as f:
-        scores = json.load(f)
-    env_scores = {}
-    for env, v in scores.items():
-        expert_mean = v['expert']['mean']
-        random_mean = v['random']['mean']
-        env_scores[env] = {'expert': expert_mean, 'random': random_mean}
-    return env_scores
-
 def load_evaluations(path):
     with open(path, 'r') as f:
         evaluations = json.load(f)
-    env_avg = {env: np.mean(scores) for env, scores in evaluations.items() if scores}
-    return env_avg
-
-def compute_normalized_score_filtered(env_avg, scores_dict, filter_fn):
-    normalized_scores = []
-    for env, avg in env_avg.items():
-        if filter_fn(env) and env in scores_dict:
-            expert = scores_dict[env]['expert']
-            random_ = scores_dict[env]['random']
-            denom = expert - random_
-            norm = 0.0 if denom == 0 else (avg - random_) / denom
-            normalized_scores.append(norm)
-    return np.mean(normalized_scores) if normalized_scores else None
+    
+    score_type = "success" if "success" in os.path.basename(path) else "raw_score"
+    env_stats = {
+        env: {
+            "mean": values[f"{score_type}_mean"],
+            "std": values[f"{score_type}_std"]
+        }
+        for env, values in evaluations.items() if f"{score_type}_mean" in values
+    }
+    return env_stats, score_type
 
 def extract_model_name(path):
     return os.path.basename(os.path.dirname(path))
 
-def sort_model_names(model_names):
-    def alphanum_key(key):
-        return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', key)]
-    return sorted(model_names, key=alphanum_key)
+def sort_env_names(env_names):
+    return sorted(env_names)
 
-def plot_bar(ax, labels, values, title, color):
-    x = np.arange(len(labels))
-    bars = ax.bar(x, values, color=color)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha='right')
-    ax.set_ylabel('Normalized Performance')
-    ax.set_ylim(-0.1, 1.1)
-    ax.set_title(title)
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.02, f'{height:.2f}', ha='center', va='bottom')
+def plot_agent_scores(agent_name, env_stats, test_tasks, score_type, show_std):  # Updated signature
+    test_envs = [env for env in env_stats if env in test_tasks]
+    train_envs = [env for env in env_stats if env not in test_tasks]
+    
+    test_means = [env_stats[env]["mean"] for env in test_envs]
+    test_stds = [env_stats[env]["std"] for env in test_envs]
+    train_means = [env_stats[env]["mean"] for env in train_envs]
+    train_stds = [env_stats[env]["std"] for env in train_envs]
+    
+    test_x = np.arange(len(test_envs))
+    train_x = np.arange(len(train_envs))
+    
+    fig, (ax_train, ax_test) = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [3, 1]})
+    
+    # Plot train tasks with conditional std error bars
+    bars_train = ax_train.bar(
+        train_x,
+        train_means,
+        yerr=train_stds if show_std else None,
+        capsize=5 if show_std else 0,
+        alpha=0.75
+    )
+    ax_train.set_xticks(train_x)
+    ax_train.set_xticklabels(train_envs, rotation=45, ha='right')
+    ax_train.set_ylabel(f'{score_type.capitalize()} Score')
+    ax_train.set_title(f'Train Tasks for {agent_name}')
+    ax_train.set_ylim(0.0, 1.0)  # Set y-limit for train tasks
+
+    # Plot test tasks with conditional std error bars
+    bars_test = ax_test.bar(
+        test_x,
+        test_means,
+        yerr=test_stds if show_std else None,
+        capsize=5 if show_std else 0,
+        alpha=0.75,
+        color='orange'
+    )
+    ax_test.set_xticks(test_x)
+    ax_test.set_xticklabels(test_envs, rotation=45, ha='right')
+    ax_test.set_ylabel(f'{score_type.capitalize()} Score')
+    ax_test.set_title(f'Test Tasks for {agent_name}')
+    ax_test.set_ylim(0.0, 1.0)  # Set y-limit for test tasks
+    
+    for bar, mean in zip(bars_train, train_means):
+        ax_train.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.02, f'{mean:.2f}', ha='center', va='bottom')
+    
+    for bar, mean in zip(bars_test, test_means):
+        ax_test.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.02, f'{mean:.2f}', ha='center', va='bottom')
+    
+    output_path = f"{agent_name}{'_success' if score_type == 'success' else ''}.png"
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    print(f'Plot saved: {output_path}')
 
 def main(args):
-
-    scores_dict = load_scores_dict(args.scores)
-    model_norm_scores = {}
-
-    # Process jat evaluations
-    env_avg = load_evaluations(args.jat_scores)
-    train_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env not in args.test_tasks)
-    test_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env in args.test_tasks)
-    if train_score is not None or test_score is not None:
-        model_norm_scores['jat'] = (train_score, test_score)
-    else:
-        print(f"Warning: No matching environments found for model jat in {args.jat_scores}")
-
-    # Process additional evaluation files
+    test_tasks = set(args.test_tasks)
+    
+    # Process evaluations for each agent
     for eval_path in args.evals:
-        model_name = extract_model_name(eval_path)
-        env_avg = load_evaluations(eval_path)
-        train_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env not in args.test_tasks)
-        test_score = compute_normalized_score_filtered(env_avg, scores_dict, lambda env: env in args.test_tasks)
-        if train_score is not None or test_score is not None:
-            model_norm_scores[model_name] = (train_score, test_score)
-        else:
-            print(f"Warning: No matching environments for model {model_name} in {eval_path}")
-
-    sorted_model_names = sort_model_names(model_norm_scores.keys())
-
-    # Prepare labels/values with placeholders for random (0) and expert (1)
-    train_labels = ['random agent']
-    train_values = [0.0]
-    test_labels = ['random agent']
-    test_values = [0.0]
-
-    for model_name in sorted_model_names:
-        train_labels.append(model_name)
-        test_labels.append(model_name)
-        train_values.append(model_norm_scores[model_name][0] if model_norm_scores[model_name][0] is not None else 0.0)
-        test_values.append(model_norm_scores[model_name][1] if model_norm_scores[model_name][1] is not None else 0.0)
-
-    train_labels.append('expert agent')
-    train_values.append(1.0)
-    test_labels.append('expert agent')
-    test_values.append(1.0)
-
-    fig, (ax_train, ax_test) = plt.subplots(1, 2, figsize=(16, 6))
-    plot_bar(ax_train, train_labels, train_values, 'Train Tasks Performance', 'skyblue')
-    plot_bar(ax_test, test_labels, test_values, 'Test Tasks Performance', 'salmon')
-
-    plt.tight_layout()
-    plt.savefig(args.output)
-    print(f'Bar plots saved to {args.output}')
+        agent_name = extract_model_name(eval_path)
+        env_stats, score_type = load_evaluations(eval_path)
+        plot_agent_scores(agent_name, env_stats, test_tasks, score_type, args.show_std)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Compute normalized performance and generate bar plots.')
-    parser.add_argument('--scores', type=str, default='jat/eval/rl/scores_dict.json',
-                        help='Path to scores_dict.json file')
-    parser.add_argument('--jat-scores', type=str, default='runs/jat-project/jat/evaluations.json',
-                        help='Path to jat evaluations.json file')
-    parser.add_argument('--evals', type=str, nargs='+',
-                        default=[
-                          'runs/checkpoints/jat/pre-trained/checkpoint-5000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-10000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-15000/evaluations.json',
-                          'runs/checkpoints/jat/pre-trained/checkpoint-20000/evaluations.json'
-                        ],
+    parser = argparse.ArgumentParser(description='Generate bar plots for raw scores or success rates per agent.')
+    parser.add_argument('--evals', type=str, nargs='+', required=True,
                         help='Paths to evaluations_{model_name}.json files')
     parser.add_argument('--test-tasks', type=str, nargs='+',
                         default=[
@@ -127,8 +101,8 @@ if __name__ == '__main__':
                           "metaworld-door-unlock",
                           "metaworld-hand-insert"
                         ],
-                        help='List of environment names to treat as test tasks; others are train tasks')
-    parser.add_argument('--output', type=str, default='normalized_performance.png',
-                        help='Output PNG file name for the bar plots')
+                        help='List of test tasks')
+    parser.add_argument('--show-std', type=lambda v: v.lower()=='true', default=False,
+                        help='Show std error bars (true/false). Default is true.')
     args = parser.parse_args()
     main(args)
